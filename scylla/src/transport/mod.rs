@@ -5,6 +5,7 @@ mod connection_pool;
 pub mod downgrading_consistency_retry_policy;
 pub mod errors;
 pub mod execution_profile;
+pub mod histogram;
 pub mod host_filter;
 pub mod iterator;
 pub mod legacy_query_result;
