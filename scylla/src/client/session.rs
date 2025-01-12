@@ -998,11 +998,14 @@ where
             identity: config.identity,
         };
 
+        let metrics = Arc::new(Metrics::new());
+
         let pool_config = PoolConfig {
             connection_config,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
             keepalive_interval: config.keepalive_interval,
+            metrics: Some(metrics.clone()),
         };
 
         let cluster = Cluster::new(
@@ -1022,7 +1025,7 @@ where
             cluster,
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
-            metrics: Arc::new(Metrics::new()),
+            metrics,
             schema_agreement_timeout: config.schema_agreement_timeout,
             schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
             refresh_metadata_on_auto_schema_agreement: config
@@ -1985,7 +1988,10 @@ where
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
                 .map(|res| res.map_err(RequestError::from))
-                .unwrap_or_else(|_| Err(RequestError::RequestTimeout(timeout))),
+                .unwrap_or_else(|_| {
+                    self.metrics.inc_request_timeouts();
+                    Err(RequestError::RequestTimeout(timeout))
+                }),
             None => runner.await.map_err(RequestError::from),
         };
 
