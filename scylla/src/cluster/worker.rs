@@ -2,6 +2,7 @@ use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::errors::{NewSessionError, QueryError};
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::network::{PoolConfig, VerifiedKeyspaceName};
+use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 
@@ -91,6 +92,9 @@ struct ClusterWorker {
     // This value determines how frequently the cluster
     // worker will refresh the cluster metadata
     cluster_metadata_refresh_interval: Duration,
+
+    #[cfg(feature = "metrics")]
+    metrics: Arc<Metrics>,
 }
 
 #[derive(Debug)]
@@ -105,6 +109,7 @@ struct UseKeyspaceRequest {
 }
 
 impl Cluster {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         known_nodes: Vec<InternalKnownNode>,
         pool_config: PoolConfig,
@@ -113,6 +118,7 @@ impl Cluster {
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -129,6 +135,8 @@ impl Cluster {
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
+            #[cfg(feature = "metrics")]
+            metrics.clone(),
         )
         .await?;
 
@@ -141,6 +149,8 @@ impl Cluster {
             host_filter.as_deref(),
             TabletsInfo::new(),
             &HashMap::new(),
+            #[cfg(feature = "metrics")]
+            &metrics,
         )
         .await;
         cluster_data.wait_until_all_pools_are_initialized().await;
@@ -163,6 +173,8 @@ impl Cluster {
 
             host_filter,
             cluster_metadata_refresh_interval,
+
+            metrics,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -415,6 +427,7 @@ impl ClusterWorker {
                 self.host_filter.as_deref(),
                 cluster_data.locator.tablets.clone(),
                 &cluster_data.keyspaces,
+                &self.metrics,
             )
             .await,
         );

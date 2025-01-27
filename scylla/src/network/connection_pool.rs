@@ -64,12 +64,6 @@ pub(crate) struct PoolConfig {
     pub(crate) pool_size: PoolSize,
     pub(crate) can_use_shard_aware_port: bool,
     pub(crate) keepalive_interval: Option<Duration>,
-    #[cfg(feature = "metrics")]
-    // TODO: The metrics should definitely not be stored here,
-    //       but it was the easiest way to pass it to the refiller.
-    //       It could be refactored to be passed as a parameter to the refiller,
-    //       but it would require a lot of changes in the code.
-    pub(crate) metrics: Option<Arc<Metrics>>,
 }
 
 impl Default for PoolConfig {
@@ -79,8 +73,6 @@ impl Default for PoolConfig {
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
             keepalive_interval: None,
-            #[cfg(feature = "metrics")]
-            metrics: None,
         }
     }
 }
@@ -183,6 +175,7 @@ impl NodeConnectionPool {
         #[allow(unused_mut)] mut pool_config: PoolConfig, // `mut` needed only with "cloud" feature
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_empty_notifier: broadcast::Sender<()>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
@@ -220,6 +213,8 @@ impl NodeConnectionPool {
             current_keyspace,
             pool_updated_notify.clone(),
             pool_empty_notifier,
+            #[cfg(feature = "metrics")]
+            metrics,
         );
 
         let conns = refiller.get_shared_connections();
@@ -487,6 +482,8 @@ struct PoolRefiller {
 
     // Signaled when the connection pool becomes empty
     pool_empty_notifier: broadcast::Sender<()>,
+
+    metrics: Arc<Metrics>,
 }
 
 #[derive(Debug)]
@@ -502,6 +499,7 @@ impl PoolRefiller {
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
         pool_empty_notifier: broadcast::Sender<()>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
         // and assume that the node is a Cassandra node
@@ -530,6 +528,9 @@ impl PoolRefiller {
 
             pool_updated_notify,
             pool_empty_notifier,
+
+            #[cfg(feature = "metrics")]
+            metrics,
         }
     }
 
@@ -934,7 +935,7 @@ impl PoolRefiller {
         let endpoint_fut = self.maybe_translate_for_serverless(endpoint);
 
         #[cfg(feature = "metrics")]
-        let metrics = self.pool_config.metrics.clone();
+        let metrics = self.metrics.clone();
 
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
             (Some(sharder), Some(port), Some(shard)) => async move {
@@ -949,7 +950,7 @@ impl PoolRefiller {
                     sharder.clone(),
                     &cfg,
                     #[cfg(feature = "metrics")]
-                    metrics,
+                    &metrics,
                 )
                 .await;
                 OpenedConnectionEvent {
@@ -964,12 +965,10 @@ impl PoolRefiller {
                 let result = open_connection(non_shard_aware_endpoint, None, &cfg).await;
 
                 #[cfg(feature = "metrics")]
-                if let Some(metrics) = metrics {
-                    if result.is_ok() {
-                        metrics.inc_total_connections();
-                    } else if let Err(ConnectionError::ConnectTimeout) = &result {
-                        metrics.inc_connection_timeouts();
-                    }
+                if result.is_ok() {
+                    metrics.inc_total_connections();
+                } else if let Err(ConnectionError::ConnectTimeout) = &result {
+                    metrics.inc_connection_timeouts();
                 }
 
                 OpenedConnectionEvent {
@@ -1049,11 +1048,7 @@ impl PoolRefiller {
                 Some(idx) => {
                     v.swap_remove(idx);
                     #[cfg(feature = "metrics")]
-                    self.pool_config
-                        .metrics
-                        .as_ref()
-                        .unwrap()
-                        .dec_total_connections();
+                    self.metrics.dec_total_connections();
                     true
                 }
                 None => false,
@@ -1239,6 +1234,8 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn many_connections() {
+        use crate::observability::metrics::Metrics;
+
         setup_tracing();
         let connections_number = 512;
 
@@ -1262,6 +1259,8 @@ mod tests {
         // to the right shard
         let sharder = Sharder::new(ShardCount::new(3).unwrap(), 12);
 
+        let metrics = Metrics::new();
+
         // Open the connections
         let mut conns = Vec::new();
 
@@ -1275,7 +1274,7 @@ mod tests {
                 sharder.clone(),
                 &connection_config,
                 #[cfg(feature = "metrics")]
-                None,
+                &metrics,
             ));
         }
 

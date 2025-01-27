@@ -7,6 +7,7 @@ use crate::errors::{ConnectionPoolError, QueryError};
 use crate::network::Connection;
 use crate::network::VerifiedKeyspaceName;
 use crate::network::{NodeConnectionPool, PoolConfig};
+use crate::observability::metrics::Metrics;
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::{Shard, Sharder};
 
@@ -93,6 +94,7 @@ impl Node {
         pool_config: PoolConfig,
         keyspace_name: Option<VerifiedKeyspaceName>,
         enabled: bool,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         let host_id = peer.host_id;
         let address = peer.address;
@@ -107,6 +109,8 @@ impl Node {
                 pool_config,
                 keyspace_name,
                 pool_empty_notifier,
+                #[cfg(feature = "metrics")]
+                metrics,
             )
         });
 

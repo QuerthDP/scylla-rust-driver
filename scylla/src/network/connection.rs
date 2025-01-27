@@ -1905,7 +1905,7 @@ pub(super) async fn open_connection_to_shard_aware_port(
     shard: Shard,
     sharder: Sharder,
     connection_config: &ConnectionConfig,
-    #[cfg(feature = "metrics")] metrics: Option<Arc<Metrics>>,
+    #[cfg(feature = "metrics")] metrics: &Metrics,
 ) -> Result<(Connection, ErrorReceiver), ConnectionError> {
     // Create iterator over all possible source ports for this shard
     let source_port_iter = sharder.iter_source_ports_for_shard(shard);
@@ -1914,12 +1914,10 @@ pub(super) async fn open_connection_to_shard_aware_port(
         let connect_result = open_connection(endpoint.clone(), Some(port), connection_config).await;
 
         #[cfg(feature = "metrics")]
-        if let Some(metrics) = &metrics {
-            if connect_result.is_ok() {
-                metrics.inc_total_connections();
-            } else if let Err(ConnectionError::ConnectTimeout) = &connect_result {
-                metrics.inc_connection_timeouts();
-            }
+        if connect_result.is_ok() {
+            metrics.inc_total_connections();
+        } else if let Err(ConnectionError::ConnectTimeout) = &connect_result {
+            metrics.inc_connection_timeouts();
         }
 
         match connect_result {
