@@ -128,37 +128,23 @@ impl<DeserApi> std::fmt::Debug for GenericSession<DeserApi>
 where
     DeserApi: DeserializationApiKind,
 {
-    #[cfg(feature = "metrics")]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Session")
-            .field("cluster", &ClusterNeatDebug(&self.cluster))
+        let mut d = f.debug_struct("Session");
+        d.field("cluster", &ClusterNeatDebug(&self.cluster))
             .field(
                 "default_execution_profile_handle",
                 &self.default_execution_profile_handle,
             )
-            .field("schema_agreement_interval", &self.schema_agreement_interval)
-            .field("metrics", &self.metrics)
-            .field(
-                "auto_await_schema_agreement_timeout",
-                &self.schema_agreement_timeout,
-            )
-            .finish()
-    }
+            .field("schema_agreement_interval", &self.schema_agreement_interval);
 
-    #[cfg(not(feature = "metrics"))]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Session")
-            .field("cluster", &ClusterNeatDebug(&self.cluster))
-            .field(
-                "default_execution_profile_handle",
-                &self.default_execution_profile_handle,
-            )
-            .field("schema_agreement_interval", &self.schema_agreement_interval)
-            .field(
-                "auto_await_schema_agreement_timeout",
-                &self.schema_agreement_timeout,
-            )
-            .finish()
+        #[cfg(feature = "metrics")]
+        d.field("metrics", &self.metrics);
+
+        d.field(
+            "auto_await_schema_agreement_timeout",
+            &self.schema_agreement_timeout,
+        )
+        .finish()
     }
 }
 
@@ -1019,17 +1005,15 @@ where
             identity: config.identity,
         };
 
-        #[cfg(feature = "metrics")]
-        let metrics = Arc::new(Metrics::new());
-
         let pool_config = PoolConfig {
             connection_config,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
             keepalive_interval: config.keepalive_interval,
-            #[cfg(feature = "metrics")]
-            metrics: Some(metrics.clone()),
         };
+
+        #[cfg(feature = "metrics")]
+        let metrics = Arc::new(Metrics::new());
 
         let cluster = Cluster::new(
             known_nodes,
@@ -1039,6 +1023,7 @@ where
             config.host_filter,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,
+            metrics.clone(),
         )
         .await?;
 
