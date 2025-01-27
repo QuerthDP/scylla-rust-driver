@@ -3,6 +3,7 @@
 //! - driver-side tracing,
 //! - cluster-side tracing,
 //! - request execution history,
+//! - atomic histogram,
 //! - driver metrics.
 
 pub(crate) mod driver_tracing;
