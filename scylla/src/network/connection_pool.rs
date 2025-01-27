@@ -935,7 +935,16 @@ impl PoolRefiller {
         let endpoint_fut = self.maybe_translate_for_serverless(endpoint);
 
         #[cfg(feature = "metrics")]
-        let metrics = self.metrics.clone();
+        let count_in_metrics = {
+            let metrics = self.metrics.clone();
+            move |connect_result: &Result<_, ConnectionError>| {
+                if connect_result.is_ok() {
+                    metrics.inc_total_connections();
+                } else if let Err(ConnectionError::ConnectTimeout) = &connect_result {
+                    metrics.inc_connection_timeouts();
+                }
+            }
+        };
 
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
             (Some(sharder), Some(port), Some(shard)) => async move {
@@ -949,10 +958,12 @@ impl PoolRefiller {
                     shard,
                     sharder.clone(),
                     &cfg,
-                    #[cfg(feature = "metrics")]
-                    &metrics,
                 )
                 .await;
+
+                #[cfg(feature = "metrics")]
+                count_in_metrics(&result);
+
                 OpenedConnectionEvent {
                     result,
                     requested_shard: Some(shard),
@@ -965,11 +976,7 @@ impl PoolRefiller {
                 let result = open_connection(non_shard_aware_endpoint, None, &cfg).await;
 
                 #[cfg(feature = "metrics")]
-                if result.is_ok() {
-                    metrics.inc_total_connections();
-                } else if let Err(ConnectionError::ConnectTimeout) = &result {
-                    metrics.inc_connection_timeouts();
-                }
+                count_in_metrics(&result);
 
                 OpenedConnectionEvent {
                     result,
@@ -1259,8 +1266,6 @@ mod tests {
         // to the right shard
         let sharder = Sharder::new(ShardCount::new(3).unwrap(), 12);
 
-        let metrics = Metrics::new();
-
         // Open the connections
         let mut conns = Vec::new();
 
@@ -1273,8 +1278,6 @@ mod tests {
                 0,
                 sharder.clone(),
                 &connection_config,
-                #[cfg(feature = "metrics")]
-                &metrics,
             ));
         }
 
